@@ -38,7 +38,6 @@ def load_models():
     return face, lp
 
 face_cascade, lp_model = load_models()
-# Ensure model name matches exactly what is in 'ollama list'
 llm = ChatOllama(model="gemma4:e4b ", temperature=0.0)
 
 # --- 3. BACKGROUND CAN BUS MANAGER ---
@@ -83,12 +82,10 @@ def save_event_data(data):
         json.dump(history, f, indent=4)
 
 def blur_privacy(img):
-    """Optimized privacy filter with smaller kernels for faster processing."""
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     faces = face_cascade.detectMultiScale(gray, 1.1, 4)
     for (x, y, w, h) in faces:
         roi = img[y:y+h, x:x+w]
-        # Optimized Kernel size (25, 25) vs previous (99, 99)
         img[y:y+h, x:x+w] = cv2.GaussianBlur(roi, (25, 25), 30)
     
     results = lp_model(img, conf=0.3, verbose=False)
@@ -97,7 +94,6 @@ def blur_privacy(img):
             x1, y1, x2, y2 = map(int, box.xyxy[0])
             roi = img[max(0,y1):y2, max(0,x1):x2]
             if roi.size > 0:
-                # Optimized Kernel size (25, 25) vs previous (151, 151)
                 img[y1:y2, x1:x2] = cv2.GaussianBlur(roi, (25, 25), 0)
     return img
 
@@ -108,7 +104,6 @@ def prep_frame(img_file):
         nparr = np.frombuffer(img_file.read(), np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         img = blur_privacy(img)
-        # 224x224 is the sweet spot for Gemma Vision speed/accuracy
         img = cv2.resize(img, (224, 224)) 
         _, buffer = cv2.imencode('.jpg', img)
         return base64.b64encode(buffer).decode('utf-8')
@@ -172,7 +167,7 @@ with col_vid:
             "event_id": st.session_state.current_event_id,
             "timestamp": datetime.now().strftime("%H:%M:%S"),
             "status": "IMPACT_ALERT",
-            "location": {"lat": 42.7111, "lng": -81.2581}, # Updated to Dutton, Ontario
+            "location": {"lat": 42.7111, "lng": -81.2581}, 
             "vehicle_details": {"plate_number": "GEM-789", "passengers": 2},
             "telemetry": {"impact_g": state.telemetry["impact_g"], "speed_at_impact": 85}
         })

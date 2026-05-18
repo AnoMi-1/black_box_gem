@@ -9,12 +9,12 @@ import cv2
 import numpy as np
 import random
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 from langchain_ollama import ChatOllama
 from langchain_core.messages import HumanMessage
 from ultralytics import YOLO
 
 # --- 1. PERSISTENT SHARED STATE ---
-# Using cache_resource ensures the thread and UI talk to the same object
 class SharedState:
     def __init__(self):
         self.telemetry = {"speed": 85, "impact_g": 0.0}
@@ -29,30 +29,29 @@ def get_state():
 state = get_state()
 LOG_FILE = "accident_history.json"
 
-
 # --- 2. MODELS & CONFIGURATION ---
 @st.cache_resource
 def load_models():
+    # Load OpenCV Haar Cascade and YOLO Privacy Model
     face = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
     lp = YOLO("/home/pabl0/Music/Black_Box_Gem/models/LP-detection.pt")
     return face, lp
 
 face_cascade, lp_model = load_models()
+# Ensure model name matches exactly what is in 'ollama list'
 llm = ChatOllama(model="gemma4:e4b ", temperature=0.0)
 
 # --- 3. BACKGROUND CAN BUS MANAGER ---
 def can_bus_manager(state):
     try:
-        # Note: Ensure vcan0 is up in your terminal before running
         bus = can.interface.Bus(channel='vcan0', bustype='socketcan')
         while getattr(threading.current_thread(), "do_run", True):
             if state.stop_event.is_set():
-                state.telemetry["speed"] = 0   
+                state.telemetry["speed"] = 0 
             else:
                 state.telemetry["speed"] += random.choice([-1, 0, 1])
                 state.telemetry["speed"] = max(60, min(state.telemetry["speed"], 110))
             
-            # Broadcast current state
             msg = can.Message(arbitration_id=0x101, data=[int(state.telemetry["speed"])], is_extended_id=False)
             bus.send(msg)
             time.sleep(0.5)
@@ -84,11 +83,13 @@ def save_event_data(data):
         json.dump(history, f, indent=4)
 
 def blur_privacy(img):
+    """Optimized privacy filter with smaller kernels for faster processing."""
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     faces = face_cascade.detectMultiScale(gray, 1.1, 4)
     for (x, y, w, h) in faces:
         roi = img[y:y+h, x:x+w]
-        img[y:y+h, x:x+w] = cv2.GaussianBlur(roi, (99, 99), 30)
+        # Optimized Kernel size (25, 25) vs previous (99, 99)
+        img[y:y+h, x:x+w] = cv2.GaussianBlur(roi, (25, 25), 30)
     
     results = lp_model(img, conf=0.3, verbose=False)
     for res in results:
@@ -96,7 +97,8 @@ def blur_privacy(img):
             x1, y1, x2, y2 = map(int, box.xyxy[0])
             roi = img[max(0,y1):y2, max(0,x1):x2]
             if roi.size > 0:
-                img[y1:y2, x1:x2] = cv2.GaussianBlur(roi, (151, 151), 0)
+                # Optimized Kernel size (25, 25) vs previous (151, 151)
+                img[y1:y2, x1:x2] = cv2.GaussianBlur(roi, (25, 25), 0)
     return img
 
 def prep_frame(img_file):
@@ -106,6 +108,7 @@ def prep_frame(img_file):
         nparr = np.frombuffer(img_file.read(), np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         img = blur_privacy(img)
+        # 224x224 is the sweet spot for Gemma Vision speed/accuracy
         img = cv2.resize(img, (224, 224)) 
         _, buffer = cv2.imencode('.jpg', img)
         return base64.b64encode(buffer).decode('utf-8')
@@ -135,17 +138,8 @@ for key, val in defaults.items():
 
 with st.sidebar:
     st.header("🛠️ System Health")
-
     import subprocess
-
-    # Check vcan0 interface status
-    vcan_status = "vcan0" in subprocess.run(
-        ["ip", "link"],
-        capture_output=True,
-        text=True
-    ).stdout
-
-    # Status indicators
+    vcan_status = "vcan0" in subprocess.run(["ip", "link"], capture_output=True, text=True).stdout
     st.write(f"{'🟢' if vcan_status else '🔴'} **CAN Interface**")
     st.write(f"{'🟢' if lp_model else '🔴'} **Privacy Models**")
     st.write(f"{'🟢' if llm else '🔴'} **AI Engine**")
@@ -153,10 +147,7 @@ with st.sidebar:
     if st.button("🔄 RESET SYSTEM"):
         state.stop_event.clear()
         state.telemetry["impact_g"] = 0.0
-
-        for key in defaults:
-            st.session_state[key] = defaults[key]
-
+        for key in defaults: st.session_state[key] = defaults[key]
         st.rerun()
 
 st.title("💎 Black Box Gem: Edge Triage")
@@ -171,7 +162,7 @@ with col_vid:
     f3 = st.file_uploader("T+2s", type=['jpg','png'], key="f3", disabled=ui_locked)
    
     if st.button("🚨 SIMULATE ACCIDENT", type="primary", disabled=st.session_state.accident_detected):
-        state.stop_event.set() # Triggers Speed -> 0
+        state.stop_event.set() 
         st.session_state.accident_detected = True
         st.session_state.accident_timestamp = time.time()
         state.telemetry["impact_g"] = round(random.uniform(6.5, 12.8), 1)
@@ -181,9 +172,9 @@ with col_vid:
             "event_id": st.session_state.current_event_id,
             "timestamp": datetime.now().strftime("%H:%M:%S"),
             "status": "IMPACT_ALERT",
-            "location": {"lat": -1.2863, "lng": 36.8172},
+            "location": {"lat": 42.7111, "lng": -81.2581}, # Updated to Dutton, Ontario
             "vehicle_details": {"plate_number": "GEM-789", "passengers": 2},
-            "telemetry": {"impact_g": state.telemetry["impact_g"], "speed_at_impact": 0}
+            "telemetry": {"impact_g": state.telemetry["impact_g"], "speed_at_impact": 85}
         })
         st.rerun()
 
@@ -210,32 +201,30 @@ with col_data:
         with st.status("💎 Black Box Gem: Triage Reasoning...", expanded=True) as status:
             st.write("1. 🛠️ Checking Sensor Integrity...")
 
-            # 1. IMMEDIATE SENSOR CHECK
             provided_files = [f1, f2, f3]
             valid_files = [f for f in provided_files if f is not None]
             sensor_death = len(valid_files) < 3 
 
             if sensor_death:
                 st.error(f"⚠️ SENSOR ALERT: {3 - len(valid_files)} feed(s) missing.")
-                # We SKIP the AI entirely to save your 8 CPUs if the sensors are dead
                 analysis_dict = {
                     "severity": "HIGH",
-                    "victims": "UNKNOWN",
-                    "fire_risk": "UNKNOWN",
-                    "analysis_summary": "HARDWARE_BLACKOUT: Physical sensor disconnection detected. AI bypassed."
+                    "analysis_summary": "HARDWARE_BLACKOUT: Physical sensor disconnection detected. AI bypassed.",
+                    "processed_images": [prep_frame(f) for f in valid_files]
                 }
-                st.write("2. ⏩ AI Bypassed due to hardware failure.")
             else:
                 st.write("✅ All sensors responsive.")
                 
-                # 2. PRIVACY PIPELINE (Only run if sensors are okay)
-                st.write("2. 🛡️ Running Local Privacy Filter...")
-                frames = [prep_frame(f) for f in valid_files]
+                # 2. PARALLEL PRIVACY PIPELINE
+                st.write("2. 🛡️ Running Local Privacy Filter Concurrently...")
+                with ThreadPoolExecutor() as executor:
+                    frames_iter = executor.map(prep_frame, valid_files)
+                    frames = list(frames_iter)
                 
                 # 3. AI REASONING
-                st.write("3. 🧠 Gemma Analyzing (This may take a moment)...")
+                st.write("3. 🧠 Gemma Analyzing Telemetry + Visual Context...")
                 prompt = """
-                TASK: Analyze these 3 dashcam frames of a vehicle accident.
+                TASK: Analyze these 3 dashcam frames from an Ontario Blizzard pileup.
                 Output ONLY valid JSON: 
                 {"severity": "LOW/MED/HIGH", "victims": int, "fire_risk": bool, "analysis_summary": "short text"}
                 """
@@ -244,24 +233,20 @@ with col_data:
                     [{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{f}"}} for f in frames if f])
                 
                 try:
-                    # Added a timeout hint (if your LangChain/Ollama version supports it)
                     res = llm.invoke([msg]).content
                     start, end = res.find('{'), res.rfind('}') + 1
                     analysis_dict = json.loads(res[start:end])
-                    analysis_dict["processed_images"] = frames # Keep images for EMS
+                    analysis_dict["processed_images"] = frames
                     st.write("4. 📡 Triage Data Compressed & Transmitted.")
                     
-                except Exception as e:
-                    # NEW FALLBACK: Does not use keywords like "Sensor" or "Blackout" 
-                    # unless it's actually a sensor death.
+                except Exception:
                     analysis_dict = {
                         "severity": "HIGH", 
                         "analysis_summary": "COMPUTE_TIMEOUT: System overloaded. Manual assessment required.", 
                         "processed_images": frames
                     }
-                    st.warning("Inference timed out. Sending raw telemetry to EMS.")
+                    st.warning("Inference timeout. Sending raw telemetry.")
 
-            # --- SAVE DATA ---
             save_event_data({
                 "event_id": st.session_state.current_event_id,
                 "status": "TRIAGE_COMPLETE",
