@@ -1,0 +1,21 @@
+# Core Framework
+streamlit==1.40.0
+langchain-ollama==0.2.0
+langgraph==0.2.35
+langgraph-checkpoint-sqlite==2.0.1
+
+# Telemetry & Hardware Simulation
+python-can==4.3.1
+numpy==1.26.4
+
+# Vision & Image Processing
+opencv-python-headless==4.9.0.80
+pillow==10.2.0
+
+# Utilities
+pydantic==2.6.1
+requests==2.31.0
+
+ultralytics==8.3.40
+
+
