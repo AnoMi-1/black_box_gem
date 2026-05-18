@@ -20,6 +20,6 @@ fi
 
 # 3. Verify Gemma model presence
 echo "🔍 Checking for Gemma 3 model installation..."
-ollama pull gemma:4b
+ollama pull gemma:e4b
 
 echo "🎉 Environment setup complete! You are ready to run the Streamlit app."
